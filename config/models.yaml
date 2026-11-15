@@ -1,0 +1,15 @@
+# Model configuration: maps abstract tiers (agents/*.yaml -> llm.tier) to concrete local models.
+# The mock stays the default; start with `python -m myriad --provider ollama` to use Ollama.
+# No paid cloud APIs (see docs/ROADMAP.md, phase 9).
+
+default_provider: mock
+
+ollama:
+  base_url: http://127.0.0.1:11434
+  timeout_seconds: 180
+  decision_mode: tools  # free-text answers + native tool calls; "json" forces decision JSON
+
+tiers:
+  reasoning:
+    model: qwen3:8b       # 4.9 GB, fits an 8 GB GPU together with the context below
+    context_window: 8192  # sent to Ollama as num_ctx; also the window used for token budgeting
