@@ -18,8 +18,16 @@ from myriad.agents.definition import load_agents
 from myriad.config import build_provider, load_context, load_model_config
 from myriad.engine.task_engine import TaskEngine
 from myriad.interface.session import ChatSession, Reply
-from myriad.models import TaskStatus
+from myriad.executors.service import CodingOutcome
+from myriad.models import FailureReason, TaskStatus
 from myriad.skills.loader import load_skills
+
+
+class RefusingCoder:
+    """Forge stand-in: none of these cases is a coding task, so a delegation to Forge is a routing error."""
+
+    def run(self, task, brief, instructions) -> CodingOutcome:
+        return CodingOutcome(False, "Benchmark: Forge is not available here.", reason=FailureReason.EXECUTOR_ERROR)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTEXT = ("I'm building MYRIAD, a multi-agent system in Python. Atlas is the orchestrator, Sage the planner. "
@@ -94,7 +102,7 @@ def run(runs: int, out: Path | None, use_skills: bool = True) -> None:
         passed, seconds, tokens = 0, 0.0, 0
         for i in range(runs):
             engine = TaskEngine(agents, build_provider("ollama", config, agents), context=context,
-                                skills=skills)
+                                skills=skills, executors={"coding": RefusingCoder()})
             session = ChatSession(engine)
             start = time.time()
             for turn in case.turns:

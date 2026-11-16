@@ -102,6 +102,9 @@ class AgentDefinition(_Strict):
     memory: Memory
     llm: LLMSettings
     limits: Limits
+    # Executor agents do their work through an external executor (e.g. "coding" = Claude Code)
+    # instead of the local model loop; the brief goes straight to the executor.
+    executor: str | None = None
 
     @model_validator(mode="after")
     def _private_namespace_matches_id(self) -> AgentDefinition:

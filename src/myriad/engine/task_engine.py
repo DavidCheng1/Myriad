@@ -9,6 +9,7 @@ from functools import partial
 
 from myriad.agents.definition import AgentDefinition
 from myriad.agents.runtime import AgentRuntime, LimitExceeded
+from myriad.executors.service import CodingService
 from myriad.llm.base import Completion, LLMProvider, ProviderError
 from myriad.memory.access import MemoryAccess
 from myriad.memory.store import MemoryStore, normalize_subject
@@ -69,12 +70,18 @@ class TaskEngine:
         memory: MemoryStore | None = None,
         context: str = "",
         skills: Mapping[str, Skill] | None = None,
+        executors: Mapping[str, CodingService] | None = None,
     ) -> None:
         """`context` is the organization profile (config/context.md) shown to every agent;
-        `skills` is the skill library (skills/), of which each agent gets its `skills.library`."""
+        `skills` is the skill library (skills/), of which each agent gets its `skills.library`;
+        `executors` serve executor agents such as Forge (`executor: coding`)."""
         if root_agent not in agents:
             raise ValueError(f"root agent '{root_agent}' is not loaded")
         self.agents = dict(agents)
+        self.executors = dict(executors or {})
+        for aid, agent in self.agents.items():
+            if agent.executor is not None and agent.executor not in self.executors:
+                raise ValueError(f"agent '{aid}' needs executor '{agent.executor}', which is not configured")
         self.skills = dict(skills or {})
         if self.skills:  # without a library (tests, minimal setups) skill lists are ignored
             for aid, agent in self.agents.items():
@@ -290,7 +297,10 @@ class TaskEngine:
         self.tasks[child.id] = child
         self._log(child, parent.assigned_to, target, MessageType.REQUEST,
                   decision.brief.model_dump_json())
-        result = self.run(child)  # synchronous; the brief is all the child sees - no history
+        if self.agents[target].executor is not None:
+            result = self._run_executor(child)  # no local model step: the brief goes to the executor
+        else:
+            result = self.run(child)  # synchronous; the brief is all the child sees - no history
         self._log(child, target, parent.assigned_to, MessageType.RESPONSE,
                   f"{child.status}: {result.text}")
 
@@ -306,6 +316,32 @@ class TaskEngine:
                 f"(child task {child.id}, {child.failure_reason}): {result.text}"
             )
         return _ActionResult("delegate", feedback, ok=False, llm_calls=result.llm_calls)
+
+    def _run_executor(self, child: Task) -> TaskResult:
+        agent = self.agents[child.assigned_to]
+        service = self.executors[agent.executor]  # checked at start-up
+        child.status = TaskStatus.RUNNING
+        outcome = service.run(child, child.messages[0].content, self._executor_instructions(agent))
+        if outcome.ok:
+            child.status = TaskStatus.DONE
+            child.result = outcome.text
+        else:
+            child.status = TaskStatus.FAILED
+            child.failure_reason = outcome.reason or FailureReason.EXECUTOR_ERROR
+            child.result = outcome.text
+        if outcome.artifact_id is not None:
+            self._log(child, agent.id, "artifacts", MessageType.INFO, f"stored {outcome.artifact_id}")
+        return TaskResult(child, outcome.text, [], 0)
+
+    @staticmethod
+    def _executor_instructions(agent: AgentDefinition) -> str:
+        """The executor agent's soul and rules, handed to the external coding agent."""
+        rules = [*agent.soul.principles, *agent.behavior.decision_rules]
+        return (
+            f"You work as {agent.name}, the {agent.role} of MYRIAD, on a brief from Atlas. "
+            + " ".join(rules)
+            + " Work only inside the current directory. End with a short summary of what you changed and why."
+        )
 
     @staticmethod
     def _user_request(task: Task) -> str:

@@ -10,6 +10,10 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from myriad.agents.definition import AgentDefinition
+from myriad.artifacts import SQLiteArtifactStore
+from myriad.executors.claude_code import ClaudeCodeExecutor, find_claude
+from myriad.executors.service import CodingService
+from myriad.executors.workspace import GitWorkspace, WorkspaceError
 from myriad.llm.base import LLMProvider
 from myriad.llm.mock import MockProvider
 from myriad.llm.ollama import OllamaProvider
@@ -37,9 +41,19 @@ class TierSettings(_Strict):
     context_window: int = Field(gt=0)
 
 
+class ForgeSettings(_Strict):
+    executor: Literal["claude_code"] = "claude_code"
+    command: str = "auto"
+    repo: str  # target repository, relative to the MYRIAD folder or absolute
+    timeout_seconds: float = Field(default=900, gt=0)
+    allowed_tools: str = "Read Edit Write Glob Grep"
+    test_command: list[str] = []
+
+
 class ModelConfig(_Strict):
     default_provider: ProviderName = "mock"
     ollama: OllamaSettings = OllamaSettings()
+    forge: ForgeSettings | None = None
     tiers: dict[str, TierSettings]
 
 
@@ -75,6 +89,30 @@ def build_provider(
             decision_mode=config.ollama.decision_mode,
         )
     raise ConfigError(f"unknown provider '{name}'")
+
+
+def build_coding_service(
+    settings: ForgeSettings | None, root: Path, data_dir: Path
+) -> tuple[CodingService | None, str]:
+    """The service behind Forge, or None with the reason why it is off."""
+    if settings is None:
+        return None, "nicht konfiguriert"
+    repo = Path(settings.repo)
+    repo = repo if repo.is_absolute() else root / repo
+    if not repo.is_dir():
+        return None, f"Repository fehlt ({repo}); scripts/create_practice_repo.py legt das Übungs-Repo an"
+    command = find_claude(settings.command)
+    if command is None:
+        return None, "Claude Code nicht gefunden"
+    workspace = GitWorkspace(repo, data_dir / "worktrees")
+    try:
+        workspace.check()
+    except WorkspaceError as exc:
+        return None, f"kein Git-Repository mit Commit: {exc}"
+    executor = ClaudeCodeExecutor(command, allowed_tools=settings.allowed_tools,
+                                  timeout=settings.timeout_seconds)
+    artifacts = SQLiteArtifactStore(data_dir / "myriad.db")
+    return CodingService(executor, workspace, artifacts, settings.test_command), f"an ({repo.name})"
 
 
 def load_context(path: str | Path) -> str:

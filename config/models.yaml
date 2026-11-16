@@ -9,6 +9,15 @@ ollama:
   timeout_seconds: 180
   decision_mode: tools  # free-text answers + native tool calls; "json" forces decision JSON
 
+forge:
+  executor: claude_code
+  command: auto  # auto: newest Claude Code bundled with the VS Code extension, else `claude` on PATH
+  repo: data/projects/practice  # target repository, relative to the MYRIAD folder (practice repo first)
+  timeout_seconds: 900
+  # Claude Code's tools inside the worktree; in headless mode every other call is denied.
+  allowed_tools: "Read Edit Write Glob Grep Bash(python -m unittest:*) Bash(python -m pytest:*)"
+  test_command: ["python", "-m", "unittest", "discover", "-s", "tests", "-q"]
+
 tiers:
   reasoning:
     model: qwen3:8b       # 4.9 GB, fits an 8 GB GPU together with the context below

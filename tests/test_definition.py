@@ -123,7 +123,7 @@ def test_sage_loads(sage) -> None:
 
 
 def test_load_agents_loads_all_definitions() -> None:
-    assert set(load_agents(AGENTS_DIR)) == {"atlas", "sage"}
+    assert set(load_agents(AGENTS_DIR)) == {"atlas", "sage", "forge"}
 
 
 def test_load_agents_requires_id_to_match_file_name(tmp_path: Path) -> None:

@@ -11,7 +11,10 @@ import re
 
 import pytest
 
+from myriad.agents.definition import load_agent
 from myriad.config import build_provider, load_context, load_model_config
+from myriad.executors.service import CodingOutcome
+from myriad.models import FailureReason
 from myriad.engine.task_engine import TaskEngine
 from myriad.interface.session import ChatSession
 from myriad.memory.store import SQLiteMemoryStore
@@ -36,12 +39,21 @@ def make_session(atlas, sage, tmp_path):
     skills = load_skills(AGENTS_DIR.parent / "skills")
     stores: list[SQLiteMemoryStore] = []
 
+    forge = load_agent(AGENTS_DIR / "forge.yaml")  # the team as the CLI loads it
+
+    class RefusingCoder:  # no case here is a coding task; Claude Code is never started
+        def run(self, task, brief, instructions) -> CodingOutcome:
+            return CodingOutcome(False, "Live test: Forge is not available here.",
+                                 reason=FailureReason.EXECUTOR_ERROR)
+
     def factory(agents=None) -> ChatSession:
         agents = agents or {"atlas": atlas, "sage": sage}
+        agents = {**agents, "forge": forge}
         store = SQLiteMemoryStore(tmp_path / "live.db")
         stores.append(store)
         provider = build_provider("ollama", config, agents)
-        return ChatSession(TaskEngine(agents, provider, memory=store, context=context, skills=skills))
+        return ChatSession(TaskEngine(agents, provider, memory=store, context=context, skills=skills,
+                                      executors={"coding": RefusingCoder()}))
 
     yield factory
     for store in stores:

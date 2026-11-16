@@ -48,7 +48,7 @@ def test_cli_flow(mvp_cases) -> None:
     text = "\n".join(output)
     for expected in (
         "Modell: mock - SIMULIERT, keine echte KI",
-        "Agenten: atlas, sage",
+        "Agenten: atlas, ",  # forge joins only where the practice repo and Claude Code exist
         "Atlas (simuliert): [SIMULIERT]",
         "Atlas (simuliert) fragt: [SIMULIERT]",
         "Offene Rückfrage verworfen",

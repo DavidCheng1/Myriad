@@ -32,6 +32,7 @@ class ChatSession:
         self.history: list[ChatMessage] = []  # compact: goal + final reply per finished task
         self.pending: Task | None = None  # task waiting for the user's answer
         self.root_ids: list[str] = []
+        self.info: dict[str, str] = {}  # status lines for the interface, e.g. whether Forge is on
 
     def send(self, text: str) -> Reply:
         text = text.strip()

@@ -121,8 +121,8 @@ Ausgangspunkt war eine Recherche zu offenen Tools (Hermes, Agent Skills, Goose, 
 | # | Phase | Status |
 |---|---|---|
 | 10a | Skill-Fundament (Agent-Skills-Format, Auswahl durch Code, erste Skills) | ✅ |
-| 10b | Forge MVP: Claude Code headless (`claude -p`) in einem Git-Worktree, Artefakt-Ablage, Test-Gate, Freigabe durch den Nutzer; Codex als zweiter Ausführender hinter derselben Schnittstelle | ⏳ |
-| 10c | Qualitätstor: Benchmark als Regressionstest mit Schwellen, Sicherheitstests gegen Prompt-Injection, Skill `test-and-fix` | ⬜ |
+| 10b | Forge MVP: Claude Code headless (`claude -p`) in einem Git-Worktree, Artefakt-Ablage, Test-Gate, Freigabe durch den Nutzer | ✅ |
+| 10c | Qualitätstor: Benchmark als Regressionstest mit Schwellen, Sicherheitstests gegen Prompt-Injection, Skill `test-and-fix`; Codex als zweiter Ausführender | ⏳ |
 
 **10a · Ergebnis:**
 - Loader nach Standard, Auswahl durch Code, Einbindung ins Ende des Systemprompts, Befehl `/skills`, 3 Skills
@@ -132,6 +132,16 @@ Ausgangspunkt war eine Recherche zu offenen Tools (Hermes, Agent Skills, Goose, 
   - „Agenten über Sage“: 1/3 → 3/3
 - Live-Abnahme 5/5, 163 Unit-Tests grün
 - Wichtigste Erkenntnis: Anleitungen für Tool-Aufrufe gehören in die Tool-Beschreibung, nicht in einen Skill (siehe ARCHITECTURE)
+
+**10b · Ergebnis:**
+- Forge als Executor-Agent ohne lokalen Modellschritt
+- Claude Code headless aus der VS-Code-Erweiterung, Git-Worktree pro Aufgabe, Test-Gate, Artefakt-Ablage
+- Befehle `/changes`, `/review`, `/apply`, `/discard`
+- Übungs-Repo über `scripts/create_practice_repo.py`
+- Erster echter Lauf: Atlas → Forge → Claude Code hat `average_word_length` mit Tests ergänzt
+  - etwa 65 s gesamt, 2 lokale Aufrufe, 4/4 Tests grün, Artefakt zur Freigabe
+  - das Übungs-Projekt blieb bis zur Freigabe unberührt
+- Benchmark weiterhin 26/27 (kein Routing-Fehler zu Forge), Live-Abnahme 5/5, 182 Unit-Tests grün
 
 **Später, nach Bedarf:**
 - MCP-Client (selektiv, höchstens etwa 5 Tools pro Agent)

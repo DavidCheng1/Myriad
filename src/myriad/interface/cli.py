@@ -9,7 +9,15 @@ from pathlib import Path
 
 from myriad import __version__
 from myriad.agents.definition import DefinitionError, load_agents
-from myriad.config import ConfigError, ProviderName, build_provider, load_context, load_model_config
+from myriad.config import (
+    ConfigError,
+    ProviderName,
+    build_coding_service,
+    build_provider,
+    load_context,
+    load_model_config,
+)
+from myriad.executors.workspace import WorkspaceError
 from myriad.engine.task_engine import TaskEngine
 from myriad.interface.session import ChatSession, Reply
 from myriad.memory.store import SQLiteMemoryStore
@@ -22,6 +30,10 @@ HELP = """Befehle:
   /prompt  System-Prompt von Atlas anzeigen (aus agents/atlas.yaml)
   /log     Protokoll des letzten Anliegens (Tasks, Delegationen, Tool-Aufrufe)
   /skills  verfügbare Skills und welcher Agent sie nutzt
+  /changes          offene Code-Änderungen von Forge
+  /review <id>      Änderung ansehen (Zusammenfassung, Tests, Diff)
+  /apply <id>       Änderung ins Projekt übernehmen (nur nach deiner Prüfung)
+  /discard <id>     Änderung verwerfen
   /new    offene Rückfrage verwerfen, nächste Nachricht ist ein neues Anliegen
   /reset   neue Sitzung (Verlauf und Zähler leeren)
   /exit    beenden"""
@@ -34,6 +46,8 @@ REASONS = {
     FailureReason.REPORTED_BY_AGENT: "von Atlas als gescheitert gemeldet",
     FailureReason.UNRESOLVED_ACTION: "fehlgeschlagene Aktion",
     FailureReason.PROVIDER_ERROR: "Modellanbieter nicht verfügbar",
+    FailureReason.EXECUTOR_ERROR: "Coding-Agent fehlgeschlagen",
+    FailureReason.TESTS_FAILED: "Tests fehlgeschlagen",
 }
 
 
@@ -65,15 +79,24 @@ def build_session(
     provider: ProviderName | None = None,
 ) -> ChatSession:
     agents_dir = agents_dir or default_agents_dir()
+    data_dir = data_dir or default_data_dir()
     agents = load_agents(agents_dir)
     config_path = default_config_path()
     config = load_model_config(config_path)
     llm = build_provider(provider or config.default_provider, config, agents)
     context = load_context(config_path.parent / "context.md")
     skills = load_skills(agents_dir.parent / "skills")
-    memory = SQLiteMemoryStore((data_dir or default_data_dir()) / "myriad.db")
-    engine = TaskEngine(agents, llm, root_agent="atlas", memory=memory, context=context, skills=skills)
-    return ChatSession(engine)
+    coding, forge_status = build_coding_service(config.forge, agents_dir.parent, data_dir)
+    if coding is None:  # executor agents only exist when their executor works
+        agents = {aid: agent for aid, agent in agents.items() if agent.executor is None}
+    memory = SQLiteMemoryStore(data_dir / "myriad.db")
+    engine = TaskEngine(
+        agents, llm, root_agent="atlas", memory=memory, context=context, skills=skills,
+        executors={"coding": coding} if coding else None,
+    )
+    session = ChatSession(engine)
+    session.info["Forge"] = forge_status
+    return session
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -102,6 +125,8 @@ def banner(session: ChatSession) -> str:
         f"Modell: {model}\n"
         f"Agenten: {', '.join(sorted(session.engine.agents))} · Skills: {len(session.engine.skills)}\n"
         f"Gedächtnis: {'an (SQLite, bleibt nach Neustart erhalten)' if session.engine.memory else 'aus'}\n"
+        + "".join(f"{key}: {value}\n" for key, value in session.info.items())
+        + ""
         f"Sitzung {session.id} · /help zeigt alle Befehle, /exit beendet."
     )
 
@@ -165,9 +190,66 @@ def format_skills(session: ChatSession) -> str:
     return "\n".join(lines)
 
 
-def _command(session: ChatSession, command: str) -> str:
+def _coding(session: ChatSession):
+    return session.engine.executors.get("coding")
+
+
+def format_changes(session: ChatSession) -> str:
+    coding = _coding(session)
+    if coding is None:
+        return "Forge ist nicht aktiv."
+    pending = coding.pending()
+    if not pending:
+        return "Keine offenen Änderungen."
+    lines = ["Offene Änderungen (/review <id>, /apply <id>, /discard <id>):"]
+    for artifact in pending:
+        tests = {True: "Tests grün", False: "Tests ROT", None: "keine Tests"}[artifact.tests_passed]
+        files = artifact.diff_stat.splitlines()[-1].strip() if artifact.diff_stat else ""
+        lines.append(f"  {artifact.id} · {tests} · {files} · {_short(artifact.title, 70)}")
+    return "\n".join(lines)
+
+
+def format_review(session: ChatSession, artifact_id: str, max_lines: int = 120) -> str:
+    coding = _coding(session)
+    artifact = coding.artifacts.get(artifact_id) if coding else None
+    if artifact is None:
+        return f"Keine Änderung mit der ID {artifact_id or '(fehlt)'}."
+    tests = {True: "grün", False: "ROT", None: "nicht ausgeführt"}[artifact.tests_passed]
+    diff = artifact.diff.splitlines()
+    shown = "\n".join(diff[:max_lines])
+    more = f"\n… {len(diff) - max_lines} weitere Zeilen (Worktree: {artifact.worktree})" if len(diff) > max_lines else ""
+    return (
+        f"Änderung {artifact.id} · Status {artifact.status} · Tests {tests}\n"
+        f"Aufgabe: {artifact.title}\n\nZusammenfassung von Claude Code:\n{artifact.summary}\n\n"
+        f"Dateien:\n{artifact.diff_stat}\n\nTest-Ausgabe (Ende):\n{artifact.test_output or '-'}\n\n"
+        f"Diff:\n{shown}{more}"
+    )
+
+
+def _decide(session: ChatSession, command: str, args: str) -> str:
+    coding = _coding(session)
+    if coding is None:
+        return "Forge ist nicht aktiv."
+    parts = args.split()
+    if not parts:
+        return f"Bitte die ID angeben: {command} <id>"
+    try:
+        if command == "/apply":
+            return coding.apply(parts[0], force="force" in parts[1:])
+        return coding.discard(parts[0])
+    except WorkspaceError as exc:
+        return f"Nicht möglich: {exc}"
+
+
+def _command(session: ChatSession, command: str, args: str = "") -> str:
     if command == "/help":
         return HELP
+    if command == "/changes":
+        return format_changes(session)
+    if command == "/review":
+        return format_review(session, args.strip())
+    if command in ("/apply", "/discard"):
+        return _decide(session, command, args)
     if command == "/log":
         return format_protocol(session)
     if command == "/skills":
@@ -216,15 +298,18 @@ def _loop(session: ChatSession, input_fn: Callable[[str], str], out: Callable[[s
         if not line:
             continue
         if line.startswith("/"):
-            command = line.split()[0].lower()
+            name, _, args = line.partition(" ")
+            command = name.lower()
             if command in ("/exit", "/quit"):
                 out("Sitzung beendet.")
                 return 0
             if command == "/reset":
                 session.abandon_pending()
+                info = session.info
                 session = ChatSession(session.engine)
+                session.info.update(info)
                 out(f"Neue Sitzung {session.id} gestartet.")
                 continue
-            out(_command(session, command))
+            out(_command(session, command, args))
             continue
         out(format_reply(session.send(line)))

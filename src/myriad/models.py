@@ -136,6 +136,8 @@ class FailureReason(StrEnum):
     REPORTED_BY_AGENT = "reported_by_agent"
     UNRESOLVED_ACTION = "unresolved_action"
     PROVIDER_ERROR = "provider_error"
+    EXECUTOR_ERROR = "executor_error"
+    TESTS_FAILED = "tests_failed"
     ABANDONED = "abandoned"
 
 

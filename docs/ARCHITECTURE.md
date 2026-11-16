@@ -179,6 +179,24 @@ Jeder LLM-Aufruf eines Agenten endet in genau einer `Decision`:
   - `result-check` (Atlas, nach einem Ergebnis): Ergebnis prüfen und fast unverändert weitergeben
   - `project-planning` (Sage): Ziel, Schritte mit prüfbarem Ergebnis, Abhängigkeiten, Risiken, erster Schritt, innerhalb des Limits
 
+## Forge und Executor-Agenten (Phase 10b)
+- **Executor-Agent:** Eine Agent-Definition mit `executor: <name>` arbeitet nicht über das lokale Modell. Die Engine gibt das Briefing direkt an einen externen Executor. Das spart lokale Aufrufe und vermeidet 8B-Fehler beim bloßen Weiterreichen. Soul und Regeln gehen als Zusatz zum Systemprompt an den Executor.
+- **Forge** (`executor: coding`) nutzt **Claude Code headless** über das Abo des Nutzers:
+  - Aufruf: `claude -p` mit JSON-Ausgabe, Prompt über stdin, `--permission-mode acceptEdits`, `--allowedTools` aus der Konfiguration (alles andere wird abgelehnt), `--no-session-persistence`, `--strict-mcp-config`.
+  - API-Schlüssel-Variablen werden aus der Umgebung entfernt, damit nur das Abo genutzt wird.
+  - Programm: das neueste in der VS-Code-Erweiterung gebündelte `claude.exe`, sonst `claude` im PATH.
+- **Ablauf:**
+  1. Ein eigener **Git-Worktree** und Branch `forge/<task_id>`. Der Checkout des Nutzers bleibt unberührt.
+  2. Claude Code arbeitet im Worktree.
+  3. Die Änderungen werden auf dem Branch committet.
+  4. **Test-Gate** mit dem konfigurierten Testbefehl.
+  5. Ergebnis wird als **Artefakt** gespeichert: Zusammenfassung, Diff, Testausgabe.
+  6. Atlas erhält nur eine kompakte Meldung mit Artefakt-ID.
+- **Freigabe:** Nur der Nutzer übernimmt Änderungen, per `/apply <id>` als Fast-Forward-Merge. Bei roten Tests braucht es `force`. `/discard` verwirft. `/review` und `/changes` zeigen den Stand. Es gibt **keine automatische Übernahme**.
+- **Fehlerpfade:** `executor_error` (Claude Code fehlt, Zeitlimit, Fehler) und `tests_failed`. Bei roten Tests bleibt das Artefakt zur Prüfung erhalten.
+- **Budget:** Der Verbrauch von Claude Code läuft über das Abo und zählt nicht ins lokale Token-Budget des Task-Baums.
+- **Konfiguration:** `config/models.yaml → forge` (Ziel-Repo, Werkzeuge, Testbefehl, Zeitlimit). Fehlt das Repo oder Claude Code, ist Forge aus und nicht im Team.
+
 ## Kern-Datenmodelle (Skizze)
 
 ```
